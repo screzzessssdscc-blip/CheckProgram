@@ -3,3 +3,11 @@ dist/
 *.spec
 __pycache__/
 *.pyc
+ISpooferMotion/
+SteamSpoofer.exe
+bot_logs.db
+discord_bot/
+fix_anim.lua
+opencode.json
+steam_spoofer.py
+test_*.py

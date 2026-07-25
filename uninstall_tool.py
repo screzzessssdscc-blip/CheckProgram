@@ -1,7 +1,7 @@
 ﻿import os, sys, subprocess, ctypes, threading, time, tempfile, json, re
 import urllib.request
 import tkinter as tk
-from tkinter import messagebox, Menu
+from tkinter import messagebox
 
 try:
     import customtkinter as ctk
@@ -315,7 +315,7 @@ class App:
             self.r = tk.Tk()
         self.u = CTK
 
-        self.r.title(f"UninstallTool v{VERSION}")
+        self.r.title("UninstallTool")
         self.r.geometry("920x700")
         self.r.minsize(650, 480)
         self.r.configure(bg="#000000")
@@ -331,53 +331,15 @@ class App:
 
     def _ui(self):
         self.r.grid_columnconfigure(0, weight=1)
-        self.r.grid_rowconfigure(2, weight=1)
-        self._menu()
-        self._hdr()
+        self.r.grid_rowconfigure(1, weight=1)
         self._search()
         self._list()
         self._bar()
 
-    def _menu(self):
-        mb = Menu(self.r)
-        self.r.configure(menu=mb)
-        f = Menu(mb, tearoff=0)
-        mb.add_cascade(label="Файл", menu=f)
-        f.add_command(label="Обновить", command=self._load)
-        f.add_separator()
-        f.add_command(label="Проверить обновления", command=self._check_update_ui)
-        f.add_separator()
-        f.add_command(label="Выбрать все", command=self._sel_all)
-        f.add_command(label="Снять выбор", command=self._desel)
-        f.add_separator()
-        f.add_command(label="Выход", command=self._quit)
-
-    def _hdr(self):
-        bg = "#111111"
-        h = ctk.CTkFrame(self.r, corner_radius=0, fg_color=bg, height=60) if self.u else tk.Frame(self.r, bg=bg, height=60)
-        h.grid(row=0, column=0, sticky="ew")
-        try: h.grid_propagate(False)
-        except: pass
-
-        if self.u:
-            ctk.CTkLabel(h, text="UninstallTool", font=ctk.CTkFont(size=22, weight="bold"), text_color="#ffffff").pack(side="left", padx=20, pady=10)
-            tag = "ADMIN" if is_admin() else "USER"
-            tc = "#aaaaaa" if is_admin() else "#666666"
-            ctk.CTkLabel(h, text=tag, font=ctk.CTkFont(size=10, weight="bold"), text_color=tc, corner_radius=3, fg_color="#222222").pack(side="left", padx=5, pady=10)
-            self.ver_lbl = ctk.CTkLabel(h, text=f"v{VERSION}", font=ctk.CTkFont(size=10), text_color="#444444", corner_radius=3, fg_color="#1a1a1a")
-            self.ver_lbl.pack(side="left", padx=5, pady=10)
-            self.status_lbl = ctk.CTkLabel(h, text="", font=ctk.CTkFont(size=11), text_color="#555555")
-        else:
-            tk.Label(h, text="UninstallTool", font=("Segoe UI", 20, "bold"), bg=bg, fg="#ffffff").pack(side="left", padx=20, pady=10)
-            tk.Label(h, text=f"v{VERSION}", font=("Segoe UI", 9), bg=bg, fg="#444444").pack(side="left", padx=5, pady=10)
-            self.status_lbl = tk.Label(h, text="", font=("Segoe UI", 11), bg=bg, fg="#555555")
-            self.ver_lbl = None
-        self.status_lbl.pack(side="right", padx=20, pady=10)
-
     def _search(self):
         bg = "#000000"
         w = ctk.CTkFrame(self.r, fg_color=bg) if self.u else tk.Frame(self.r, bg=bg)
-        w.grid(row=1, column=0, sticky="ew", padx=15, pady=(10, 2))
+        w.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 2))
         if self.u:
             self.search_e = ctk.CTkEntry(w, placeholder_text="Поиск...", width=350, font=ctk.CTkFont(size=14), corner_radius=8, height=36, border_width=1, border_color="#333333", fg_color="#111111")
             self.search_e.pack(side="left", padx=5, pady=5)
@@ -391,7 +353,7 @@ class App:
 
     def _list(self):
         c = ctk.CTkFrame(self.r, corner_radius=8, fg_color="#0a0a0a", border_width=1, border_color="#222222") if self.u else tk.Frame(self.r, bg="#0a0a0a", highlightthickness=1, highlightbackground="#222222")
-        c.grid(row=2, column=0, sticky="nsew", padx=15, pady=5)
+        c.grid(row=1, column=0, sticky="nsew", padx=15, pady=5)
         c.grid_columnconfigure(0, weight=1)
         c.grid_rowconfigure(0, weight=1)
         self.lb = tk.Listbox(c, font=("Segoe UI", 12), selectmode="extended", bg="#0a0a0a", fg="#dddddd", selectbackground="#ffffff", selectforeground="#000000", activestyle="none", borderwidth=0, highlightthickness=0)
@@ -404,7 +366,7 @@ class App:
     def _bar(self):
         bg = "#000000"
         b = ctk.CTkFrame(self.r, corner_radius=0, fg_color=bg) if self.u else tk.Frame(self.r, bg=bg)
-        b.grid(row=3, column=0, sticky="ew", padx=15, pady=(2, 12))
+        b.grid(row=2, column=0, sticky="ew", padx=15, pady=(2, 12))
 
         def mk(txt, cmd, fg, hg):
             if self.u:
@@ -419,6 +381,9 @@ class App:
 
         self.prog_lbl = ctk.CTkLabel(b, text="", font=ctk.CTkFont(size=11), text_color="#ffffff") if self.u else tk.Label(b, text="", font=("Segoe UI", 10), bg=bg, fg="#ffffff")
         self.prog_lbl.pack(side="left", padx=8, pady=6)
+
+        self.status_lbl = ctk.CTkLabel(b, text="", font=ctk.CTkFont(size=10), text_color="#555555") if self.u else tk.Label(b, text="", font=("Segoe UI", 9), bg=bg, fg="#555555")
+        self.status_lbl.pack(side="left", padx=8, pady=6)
 
         mk("Обновить", self._load, "#222222", "#444444").pack(side="right", padx=4, pady=6)
         mk("Выход", self._quit, "#333333", "#555555").pack(side="right", padx=4, pady=6)
