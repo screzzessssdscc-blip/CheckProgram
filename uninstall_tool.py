@@ -245,9 +245,9 @@ class App:
         self.u = CTK
 
         self.r.title("UninstallTool")
-        self.r.geometry("960x720")
         self.r.minsize(680, 500)
         self.r.configure(bg="#000000")
+        self.r.protocol("WM_DELETE_WINDOW", self._quit)
 
         ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trash_can.ico")
         if os.path.exists(ico):
@@ -255,7 +255,7 @@ class App:
             except: pass
 
         self._ui()
-        self._load()
+        self._anim_open()
         self.r.after(2000, self._auto_check)
 
     def _ui(self):
@@ -265,6 +265,31 @@ class App:
         self._update_bar()
         self._list()
         self._bar()
+
+    def _anim_open(self):
+        tw, th = 960, 720
+        sw, sh = self.r.winfo_screenwidth(), self.r.winfo_screenheight()
+        cx, cy = sw // 2, sh // 2
+        self.r.geometry("2x2+" + str(cx - 1) + "+" + str(cy - 1))
+        self.r.update_idletasks()
+        steps = 18
+        self._anim_step = [0]
+        def _grow():
+            i = self._anim_step[0]
+            if i >= steps:
+                self.r.geometry(f"{tw}x{th}+{cx - tw//2}+{cy - th//2}")
+                self._load()
+                return
+            t = (i + 1) / steps
+            t = 1 - (1 - t) ** 3
+            w = max(2, int(tw * t))
+            h = max(2, int(th * t))
+            x = cx - w // 2
+            y = cy - h // 2
+            self.r.geometry(f"{w}x{h}+{x}+{y}")
+            self._anim_step[0] += 1
+            self.r.after(14, _grow)
+        _grow()
 
     def _search(self):
         bg = "#000000"
@@ -618,9 +643,12 @@ class App:
             except: pass
 
     def _quit(self):
-        self.spinner.stop()
-        self.r.destroy()
-        sys.exit(0)
+        self.busy = False
+        try: self.spinner.stop()
+        except: pass
+        try: self.r.destroy()
+        except: pass
+        os._exit(0)
 
     def run(self):
         self.r.mainloop()
