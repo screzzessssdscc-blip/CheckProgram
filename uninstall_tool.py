@@ -14,7 +14,7 @@ try:
 except ImportError:
     sys.exit(1)
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 GITHUB_REPO = "screzzessssdscc-blip/CheckProgram"
 
 
@@ -31,6 +31,14 @@ def parse_version(v):
     return tuple(nums[:3])
 
 
+def format_size(kb):
+    if kb <= 0: return ""
+    if kb < 1024: return f"{int(kb)} КБ"
+    mb = kb / 1024
+    if mb < 1024: return f"{mb:.1f} МБ"
+    return f"{mb/1024:.1f} ГБ"
+
+
 def check_update():
     try:
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -39,17 +47,14 @@ def check_update():
         data = json.loads(resp.read().decode("utf-8"))
         tag = data.get("tag_name", "")
         if not tag: return None
-        latest_ver = parse_version(tag)
-        cur_ver = parse_version(VERSION)
-        if latest_ver <= cur_ver: return None
+        if parse_version(tag) <= parse_version(VERSION): return None
         exe_url = None
         for a in data.get("assets", []):
             if a.get("name", "").endswith(".exe"):
                 exe_url = a.get("browser_download_url")
                 break
-        changelog = data.get("body", "")
-        return {"version": tag, "url": exe_url, "changelog": changelog}
-    except Exception:
+        return {"version": tag, "url": exe_url, "changelog": data.get("body", "")}
+    except:
         return None
 
 
@@ -57,54 +62,44 @@ def do_download(url, progress_fn=None):
     tmp = os.path.join(tempfile.gettempdir(), "UninstallTool_new.exe")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": f"UninstallTool/{VERSION}"})
-        resp = urllib.request.urlopen(req, timeout=120)
+        resp = urllib.request.urlopen(req, timeout=300)
         total = int(resp.headers.get("Content-Length", 0))
         downloaded = 0
-        chunk_size = 256 * 1024
         with open(tmp, "wb") as f:
             while True:
-                chunk = resp.read(chunk_size)
+                chunk = resp.read(256 * 1024)
                 if not chunk: break
                 f.write(chunk)
                 downloaded += len(chunk)
                 if progress_fn and total:
-                    pct = int(downloaded * 100 / total)
-                    progress_fn(pct, downloaded, total)
+                    progress_fn(int(downloaded * 100 / total))
         return tmp
-    except Exception:
+    except:
         return None
 
 
-def create_update_bat(new_exe_path):
-    current_exe = os.path.abspath(sys.executable)
-    exe_dir = os.path.dirname(current_exe)
-    exe_name = os.path.basename(current_exe)
-    old_name = exe_name.replace(".exe", "_old.exe")
-    old_path = os.path.join(exe_dir, old_name)
-    bat_path = os.path.join(tempfile.gettempdir(), "uninstall_tool_update.bat")
-    bat_content = f'''@echo off
-powershell -Command "Start-Sleep -Seconds 4"
-taskkill /F /IM "{exe_name}" >nul 2>&1
-powershell -Command "Start-Sleep -Seconds 3"
-taskkill /F /IM "{exe_name}" >nul 2>&1
-powershell -Command "Start-Sleep -Seconds 1"
-if exist "{old_path}" del /f /q "{old_path}" >nul 2>&1
-if exist "{current_exe}" ren "{current_exe}" "{old_name}" >nul 2>&1
-powershell -Command "Start-Sleep -Seconds 1"
-copy /Y "{new_exe_path}" "{current_exe}" >nul 2>&1
-if %errorlevel%==0 (
-    start "" "{current_exe}"
-) else (
-    if exist "{old_path}" ren "{old_path}" "{exe_name}" >nul 2>&1
-    start "" "{current_exe}"
-)
-if exist "{old_path}" del /f /q "{old_path}" >nul 2>&1
-del /f /q "{new_exe_path}" >nul 2>&1
+def create_update_bat(new_path):
+    cur = os.path.abspath(sys.executable)
+    d = os.path.dirname(cur)
+    n = os.path.basename(cur)
+    old = n.replace(".exe", "_old.exe")
+    bp = os.path.join(tempfile.gettempdir(), "upd.bat")
+    bat = f"""@echo off
+powershell -NoProfile -Command "Start-Sleep -Seconds 5"
+taskkill /F /IM "{n}" >nul 2>&1
+powershell -NoProfile -Command "Start-Sleep -Seconds 2"
+if exist "{os.path.join(d, old)}" del /f /q "{os.path.join(d, old)}" >nul 2>&1
+if exist "{cur}" ren "{cur}" "{old}" >nul 2>&1
+powershell -NoProfile -Command "Start-Sleep -Seconds 1"
+copy /Y "{new_path}" "{cur}" >nul 2>&1
+start "" "{cur}"
+if exist "{os.path.join(d, old)}" del /f /q "{os.path.join(d, old)}" >nul 2>&1
+del /f /q "{new_path}" >nul 2>&1
 del /f /q "%~f0" >nul 2>&1
-'''
-    with open(bat_path, "w", encoding="ascii") as f:
-        f.write(bat_content)
-    return bat_path
+"""
+    with open(bp, "w", encoding="ascii") as f:
+        f.write(bat)
+    return bp
 
 
 def get_programs():
@@ -124,41 +119,38 @@ def get_programs():
             i += 1
             try: sub = winreg.OpenKey(root, sk, 0, winreg.KEY_READ)
             except: continue
-            dn = us = None
+            dn = us = sz = None
             try: dn, _ = winreg.QueryValueEx(sub, "DisplayName")
             except: pass
             try: us, _ = winreg.QueryValueEx(sub, "UninstallString")
             except: pass
+            try: sz, _ = winreg.QueryValueEx(sub, "EstimatedSize")
+            except: pass
             winreg.CloseKey(sub)
             if dn and us and dn not in seen:
                 seen.add(dn)
-                progs.append({"name": dn, "cmd": us})
+                progs.append({"name": dn, "cmd": us, "size": sz or 0})
         winreg.CloseKey(root)
     progs.sort(key=lambda x: x["name"].lower())
     return progs
 
 
 def kill_by_name(name):
-    keywords = ["360", "zhuang", "uninst", "helper", "safe", "guard", "shield", "tray", "protect", "av", "total", "security"]
-    name_parts = name.lower().split()
-    killed = 0
+    kws = ["360", "zhuang", "uninst", "helper", "safe", "guard", "shield", "tray", "protect", "av", "total", "security"]
+    nps = name.lower().split()
     try:
         r = subprocess.run("tasklist /FO CSV /NH", shell=True, capture_output=True, text=True, timeout=10)
         for line in r.stdout.splitlines():
             parts = line.strip().strip('"').split('","')
             if len(parts) >= 2:
-                pname = parts[0].lower()
-                pid = parts[1]
-                if any(k in pname for k in keywords) or any(np in pname for np in name_parts if len(np) > 3):
-                    try:
-                        subprocess.run(f"taskkill /F /PID {pid} /T", shell=True, capture_output=True, timeout=10)
-                        killed += 1
+                pn, pid = parts[0].lower(), parts[1]
+                if any(k in pn for k in kws) or any(np in pn for np in nps if len(np) > 3):
+                    try: subprocess.run(f"taskkill /F /PID {pid} /T", shell=True, capture_output=True, timeout=10)
                     except: pass
     except: pass
-    return killed
 
 
-def send_enter_to_windows():
+def send_enter():
     try:
         ctypes.windll.user32.keybd_event(0x0D, 0, 0, 0)
         ctypes.windll.user32.keybd_event(0x0D, 0, 2, 0)
@@ -168,67 +160,39 @@ def send_enter_to_windows():
 def try_uninstall(cmd_str, prog_name):
     exe = cmd_str.strip()
     if not exe: return False
-
     kill_by_name(prog_name)
     time.sleep(1)
-
     low = exe.lower()
     is_msi = "msiexec" in low or ".msi" in low
-
     attempts = [exe]
     if is_msi:
         if "/qn" not in low:
-            attempts.append(exe + " /qn /norestart")
-            attempts.append(exe + " /passive /norestart")
+            attempts += [exe + " /qn /norestart", exe + " /passive /norestart"]
     else:
         if not any(s in low for s in ["/s", "/silent", "/quiet", "/passive", "/q"]):
-            attempts.append(exe + " /S")
-            attempts.append(exe + " /silent /quiet")
-            attempts.append(exe + " /verysilent /supressmsgboxes /norestart")
-            attempts.append(exe + " /S /norestart")
-
+            attempts += [exe + " /S", exe + " /silent /quiet", exe + " /verysilent /supressmsgboxes /norestart"]
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0
     for a in attempts:
         try:
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0
             r = subprocess.run(a, shell=True, capture_output=True, timeout=120, startupinfo=si)
             if r.returncode == 0: return True
-        except subprocess.TimeoutExpired:
-            return True
+        except subprocess.TimeoutExpired: return True
         except: pass
-
     for a in attempts[:2]:
         try:
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0
             proc = subprocess.Popen(a, shell=True, startupinfo=si)
             time.sleep(3)
             if proc.poll() is None:
-                send_enter_to_windows()
-                time.sleep(3)
-                send_enter_to_windows()
-                time.sleep(3)
+                send_enter(); time.sleep(3)
+                send_enter(); time.sleep(3)
             if proc.poll() is None:
                 proc.terminate()
                 try: proc.wait(timeout=10)
                 except: proc.kill()
             if proc.returncode == 0: return True
         except: pass
-
-    kill_by_name(prog_name)
-    time.sleep(2)
-
-    for a in attempts[:2]:
-        try:
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0
-            r = subprocess.run(a, shell=True, capture_output=True, timeout=60, startupinfo=si)
-            if r.returncode == 0: return True
-        except: pass
-
     return False
 
 
@@ -236,77 +200,32 @@ def bg_uninstall(cmd, name, cb):
     cb(try_uninstall(cmd, name))
 
 
-def custom_msg(parent, title, msg, btn="OK", tc="#ffffff"):
-    if not CTK:
-        messagebox.showinfo(title, msg)
-        return
-    d = ctk.CTkToplevel(parent)
-    d.title("")
-    d.geometry("440x280")
-    d.configure(fg_color="#0a0a0a")
-    d.resizable(False, False)
-    d.grab_set()
-    top = ctk.CTkFrame(d, fg_color="#111111", corner_radius=0, height=55)
-    top.pack(fill="x")
-    top.pack_propagate(False)
-    ctk.CTkLabel(top, text=title, font=ctk.CTkFont(size=17, weight="bold"), text_color=tc).pack(side="left", padx=18, pady=14)
-    ctk.CTkLabel(d, text=msg, font=ctk.CTkFont(size=13), text_color="#cccccc", wraplength=400, justify="left").pack(padx=22, pady=18, anchor="w")
-    ctk.CTkButton(d, text=btn, command=d.destroy, fg_color="#ffffff", text_color="#000000", hover_color="#cccccc", width=90, height=32, corner_radius=6, font=ctk.CTkFont(size=12, weight="bold")).pack(pady=8)
-    d.wait_window()
-
-
-def custom_confirm(parent, title, msg, yes="Удалить", no="Отмена"):
-    if not CTK:
-        return messagebox.askyesno(title, msg)
-    d = ctk.CTkToplevel(parent)
-    d.title("")
-    d.geometry("440x300")
-    d.configure(fg_color="#0a0a0a")
-    d.resizable(False, False)
-    d.grab_set()
-    top = ctk.CTkFrame(d, fg_color="#111111", corner_radius=0, height=55)
-    top.pack(fill="x")
-    top.pack_propagate(False)
-    ctk.CTkLabel(top, text=title, font=ctk.CTkFont(size=17, weight="bold"), text_color="#ffffff").pack(side="left", padx=18, pady=14)
-    ctk.CTkLabel(d, text=msg, font=ctk.CTkFont(size=13), text_color="#cccccc", wraplength=400, justify="left").pack(padx=22, pady=12, anchor="w")
-    result = [False]
-    bf = ctk.CTkFrame(d, fg_color="transparent")
-    bf.pack(pady=10)
-    ctk.CTkButton(bf, text=yes, command=lambda: result.__setitem__(0, True) or d.destroy(), fg_color="#ffffff", text_color="#000000", hover_color="#cccccc", width=140, height=36, corner_radius=6, font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=10)
-    ctk.CTkButton(bf, text=no, command=d.destroy, fg_color="#333333", hover_color="#555555", width=140, height=36, corner_radius=6, font=ctk.CTkFont(size=13)).pack(side="left", padx=10)
-    d.wait_window()
-    return result[0]
-
-
 class Spinner:
-    def __init__(self, update_fn):
-        self.fn = update_fn
+    def __init__(self, label):
+        self.lbl = label
         self.on = False
-        self.base = ""
         self._id = None
         self._fi = 0
-        self._frames = ["|", "/", "-", "\\"]
+        self._frames = ["\u2502", "\u2570\u256f", "\u2500", "\u256e\u2569"]
+        self.base = ""
 
     def start(self, text=""):
-        self.base = text
-        self.on = True
-        self._fi = 0
-        self._tick()
+        self.base = text; self.on = True; self._fi = 0; self._tick()
 
     def stop(self):
         self.on = False
         if self._id:
-            try: self.fn("")
+            try: self.lbl.configure(text="")
             except: pass
         self._id = None
 
     def _tick(self):
         if not self.on: return
-        sp = self._frames[self._fi % 4]
-        self._fi += 1
+        sp = self._frames[self._fi % 4]; self._fi += 1
         dots = "." * (self._fi % 4)
-        self.fn(f"{sp} {self.base}{dots}")
-        self._id = self.fn.__self__.after(300, self._tick) if hasattr(self.fn, '__self__') else None
+        try: self.lbl.configure(text=f"{sp} {self.base}{dots}")
+        except: return
+        self._id = self.lbl.after(300, self._tick)
 
 
 class App:
@@ -326,8 +245,8 @@ class App:
         self.u = CTK
 
         self.r.title("UninstallTool")
-        self.r.geometry("920x700")
-        self.r.minsize(650, 480)
+        self.r.geometry("960x720")
+        self.r.minsize(680, 500)
         self.r.configure(bg="#000000")
 
         ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trash_can.ico")
@@ -337,12 +256,13 @@ class App:
 
         self._ui()
         self._load()
-        self.r.after(1500, self._auto_check_update)
+        self.r.after(2000, self._auto_check)
 
     def _ui(self):
         self.r.grid_columnconfigure(0, weight=1)
-        self.r.grid_rowconfigure(1, weight=1)
+        self.r.grid_rowconfigure(2, weight=1)
         self._search()
+        self._update_bar()
         self._list()
         self._bar()
 
@@ -351,7 +271,7 @@ class App:
         w = ctk.CTkFrame(self.r, fg_color=bg) if self.u else tk.Frame(self.r, bg=bg)
         w.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 2))
         if self.u:
-            self.search_e = ctk.CTkEntry(w, placeholder_text="Поиск...", width=350, font=ctk.CTkFont(size=14), corner_radius=8, height=36, border_width=1, border_color="#333333", fg_color="#111111")
+            self.search_e = ctk.CTkEntry(w, placeholder_text="\u041f\u043e\u0438\u0441\u043a...", width=350, font=ctk.CTkFont(size=14), corner_radius=8, height=36, border_width=1, border_color="#333333", fg_color="#111111")
             self.search_e.pack(side="left", padx=5, pady=5)
             self.cnt_lbl = ctk.CTkLabel(w, text="", font=ctk.CTkFont(size=11), text_color="#555555")
         else:
@@ -361,30 +281,171 @@ class App:
         self.cnt_lbl.pack(side="right", padx=10, pady=5)
         self.search_e.bind("<KeyRelease>", self._on_type)
 
+    def _update_bar(self):
+        self.upd_frame = ctk.CTkFrame(self.r, fg_color="#0d1a0d", corner_radius=0, height=0) if self.u else tk.Frame(self.r, bg="#0d1a0d", height=0)
+        self.upd_frame.grid(row=1, column=0, sticky="ew")
+        self.upd_frame.grid_remove()
+        self.upd_visible = False
+        self.upd_progress_var = None
+
+    def _show_update_banner(self, info):
+        ver = info["version"]
+        if self.u:
+            self.upd_frame.configure(height=50)
+            self.upd_frame.grid()
+            self.upd_visible = True
+            for w in self.upd_frame.winfo_children(): w.destroy()
+            f = ctk.CTkFrame(self.upd_frame, fg_color="transparent")
+            f.pack(fill="both", expand=True, padx=12, pady=5)
+            ctk.CTkLabel(f, text=f"\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u043e \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u2014 {ver}", font=ctk.CTkFont(size=12, weight="bold"), text_color="#4caf50").pack(side="left", padx=8)
+            ctk.CTkButton(f, text="\u0423\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c", command=lambda: self._start_download(info), fg_color="#4caf50", hover_color="#388e3c", text_color="#ffffff", width=120, height=28, corner_radius=5, font=ctk.CTkFont(size=11, weight="bold")).pack(side="right", padx=4)
+            ctk.CTkButton(f, text="\u041f\u043e\u0437\u0436\u0435", command=self._hide_update_banner, fg_color="#333333", hover_color="#444444", width=80, height=28, corner_radius=5, font=ctk.CTkFont(size=11)).pack(side="right", padx=4)
+        else:
+            self.upd_frame.configure(height=40)
+            self.upd_frame.grid()
+            self.upd_visible = True
+            for w in self.upd_frame.winfo_children(): w.destroy()
+            f = tk.Frame(self.upd_frame, bg="#0d1a0d")
+            f.pack(fill="both", expand=True, padx=12, pady=4)
+            tk.Label(f, text=f"\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u043e \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u2014 {ver}", font=("Segoe UI", 11, "bold"), bg="#0d1a0d", fg="#4caf50").pack(side="left", padx=8)
+            tk.Button(f, text="\u0423\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c", command=lambda: self._start_download(info), bg="#4caf50", fg="white", font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2", width=14).pack(side="right", padx=4)
+            tk.Button(f, text="\u041f\u043e\u0437\u0436\u0435", command=self._hide_update_banner, bg="#333333", fg="white", font=("Segoe UI", 10), relief="flat", cursor="hand2", width=8).pack(side="right", padx=4)
+
+    def _show_download_progress(self, info):
+        if self.u:
+            self.upd_frame.configure(height=70)
+            for w in self.upd_frame.winfo_children(): w.destroy()
+            f = ctk.CTkFrame(self.upd_frame, fg_color="transparent")
+            f.pack(fill="both", expand=True, padx=12, pady=5)
+            ctk.CTkLabel(f, text=f"\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 {info['version']}...", font=ctk.CTkFont(size=12), text_color="#aaaaaa").pack(anchor="w", padx=4)
+            self.upd_progress_var = ctk.DoubleVar(value=0)
+            bar = ctk.CTkProgressBar(f, variable=self.upd_progress_var, maximum=100, height=10, fg_color="#222222", progress_color="#4caf50", corner_radius=3)
+            bar.pack(fill="x", padx=4, pady=(4, 0))
+            self.upd_pct_lbl = ctk.CTkLabel(f, text="0%", font=ctk.CTkFont(size=10), text_color="#666666")
+            self.upd_pct_lbl.pack(anchor="e", padx=4)
+        else:
+            self.upd_frame.configure(height=60)
+            for w in self.upd_frame.winfo_children(): w.destroy()
+            f = tk.Frame(self.upd_frame, bg="#0d1a0d")
+            f.pack(fill="both", expand=True, padx=12, pady=4)
+            tk.Label(f, text=f"\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 {info['version']}...", font=("Segoe UI", 11), bg="#0d1a0d", fg="#aaaaaa").pack(anchor="w", padx=4)
+            canvas = tk.Canvas(f, bg="#222222", height=10, highlightthickness=0)
+            canvas.pack(fill="x", padx=4, pady=(4, 0))
+            self.upd_canvas = canvas
+            self.upd_pct_lbl = tk.Label(f, text="0%", font=("Segoe UI", 9), bg="#0d1a0d", fg="#666666")
+            self.upd_pct_lbl.pack(anchor="e", padx=4)
+            self.upd_progress_var = None
+
+    def _update_progress(self, pct):
+        try:
+            if self.upd_progress_var is not None:
+                self.upd_progress_var.set(pct)
+                self.upd_pct_lbl.configure(text=f"{pct}%")
+            elif hasattr(self, "upd_canvas"):
+                w = self.upd_canvas.winfo_width()
+                self.upd_canvas.delete("all")
+                self.upd_canvas.create_rectangle(0, 0, int(w * pct / 100), 10, fill="#4caf50", outline="")
+                self.upd_pct_lbl.configure(text=f"{pct}%")
+        except: pass
+
+    def _hide_update_banner(self):
+        if self.upd_visible:
+            self.upd_frame.grid_remove()
+            self.upd_visible = False
+
     def _list(self):
-        c = ctk.CTkFrame(self.r, corner_radius=8, fg_color="#0a0a0a", border_width=1, border_color="#222222") if self.u else tk.Frame(self.r, bg="#0a0a0a", highlightthickness=1, highlightbackground="#222222")
-        c.grid(row=1, column=0, sticky="nsew", padx=15, pady=5)
-        c.grid_columnconfigure(0, weight=1)
-        c.grid_rowconfigure(0, weight=1)
-        self.lb = tk.Listbox(c, font=("Segoe UI", 12), selectmode="extended", bg="#0a0a0a", fg="#dddddd", selectbackground="#ffffff", selectforeground="#000000", activestyle="none", borderwidth=0, highlightthickness=0)
-        self.lb.grid(row=0, column=0, sticky="nsew", padx=3, pady=3)
-        self.lb.bind("<<ListboxSelect>>", self._on_select)
-        sb = tk.Scrollbar(c, command=self.lb.yview, bg="#0a0a0a", troughcolor="#0a0a0a", activebackground="#333333", width=12)
-        sb.grid(row=0, column=1, sticky="ns")
-        self.lb.configure(yscrollcommand=sb.set)
+        if self.u:
+            c = ctk.CTkFrame(self.r, corner_radius=8, fg_color="#0a0a0a", border_width=1, border_color="#222222")
+            c.grid(row=2, column=0, sticky="nsew", padx=15, pady=5)
+            c.grid_columnconfigure(0, weight=1)
+            c.grid_rowconfigure(0, weight=1)
+            self.lb = tk.Listbox(c, font=("Segoe UI", 12), selectmode="extended", bg="#0a0a0a", fg="#dddddd", selectbackground="#ffffff", selectforeground="#000000", activestyle="none", borderwidth=0, highlightthickness=0)
+            self.lb.grid(row=0, column=0, sticky="nsew", padx=(3,0), pady=3)
+            self.lb.bind("<<ListboxSelect>>", self._on_select)
+            sb_frame = tk.Frame(c, bg="#0a0a0a", width=14)
+            sb_frame.grid(row=0, column=1, sticky="ns")
+            sb_frame.grid_propagate(False)
+            self._sb_canvas = tk.Canvas(sb_frame, bg="#0a0a0a", highlightthickness=0, width=14)
+            self._sb_canvas.pack(fill="both", expand=True)
+            self._sb_thumb = self._sb_canvas.create_rectangle(0, 0, 12, 40, fill="#333333", outline="", width=0)
+            self._sb_dragging = False
+            self._sb_last_y = 0
+            self._sb_canvas.bind("<ButtonPress-1>", self._sb_press)
+            self._sb_canvas.bind("<B1-Motion>", self._sb_drag)
+            self._sb_canvas.bind("<ButtonRelease-1>", self._sb_release)
+            self._sb_canvas.bind("<MouseWheel>", lambda e: self.lb.yview_scroll(-1 * (e.delta // 120), "units"))
+            self.lb.bind("<MouseWheel>", lambda e: self.lb.yview_scroll(-1 * (e.delta // 120), "units"))
+            self.lb.bind("<Configure>", lambda e: self._sb_update())
+            self.lb.bind("<KeyRelease>", lambda e: self._sb_update())
+            self.lb.bind("<ButtonRelease-1>", lambda e: self.r.after(10, self._sb_update))
+            self.lb.bind("<<ListboxSelect>>", lambda e: self.r.after(10, self._sb_update))
+            self.lb.config(yscrollcommand=self._sb_on_scroll)
+        else:
+            c = tk.Frame(self.r, bg="#0a0a0a", highlightthickness=1, highlightbackground="#222222")
+            c.grid(row=2, column=0, sticky="nsew", padx=15, pady=5)
+            c.grid_columnconfigure(0, weight=1)
+            c.grid_rowconfigure(0, weight=1)
+            self.lb = tk.Listbox(c, font=("Segoe UI", 12), selectmode="extended", bg="#0a0a0a", fg="#dddddd", selectbackground="#ffffff", selectforeground="#000000", activestyle="none", borderwidth=0, highlightthickness=0)
+            self.lb.grid(row=0, column=0, sticky="nsew", padx=3, pady=3)
+            self.lb.bind("<<ListboxSelect>>", self._on_select)
+            sb = tk.Scrollbar(c, command=self.lb.yview, bg="#0a0a0a", troughcolor="#0a0a0a", activebackground="#333333", width=12)
+            sb.grid(row=0, column=1, sticky="ns")
+            self.lb.configure(yscrollcommand=sb.set)
+            self._sb_canvas = None
+
+    def _sb_on_scroll(self, *args):
+        if self._sb_canvas is None: return
+        self._sb_update()
+
+    def _sb_update(self):
+        c = self._sb_canvas
+        if c is None: return
+        try:
+            first, last = self.lb.yview()
+        except: return
+        c_h = c.winfo_height()
+        if c_h < 20: return
+        thumb_h = max(20, int(c_h * (last - first)))
+        thumb_y = int(c_h * first)
+        c.coords(self._sb_thumb, 1, thumb_y, 11, thumb_y + thumb_h)
+        if (last - first) >= 1.0:
+            c.itemconfigure(self._sb_thumb, state="hidden")
+        else:
+            c.itemconfigure(self._sb_thumb, state="normal")
+
+    def _sb_press(self, e):
+        self._sb_dragging = True
+        self._sb_last_y = e.y
+
+    def _sb_drag(self, e):
+        if not self._sb_dragging: return
+        c = self._sb_canvas
+        c_h = c.winfo_height()
+        dy = e.y - self._sb_last_y
+        self._sb_last_y = e.y
+        try:
+            first, last = self.lb.yview()
+            visible = last - first
+            if visible >= 1.0: return
+            delta = (dy / c_h) * visible
+            self.lb.yview_moveto(max(0, min(1, first + delta)))
+        except: pass
+
+    def _sb_release(self, e):
+        self._sb_dragging = False
 
     def _bar(self):
         bg = "#000000"
         b = ctk.CTkFrame(self.r, corner_radius=0, fg_color=bg) if self.u else tk.Frame(self.r, bg=bg)
-        b.grid(row=2, column=0, sticky="ew", padx=15, pady=(2, 12))
+        b.grid(row=3, column=0, sticky="ew", padx=15, pady=(2, 12))
 
         def mk(txt, cmd, fg, hg):
             if self.u:
                 return ctk.CTkButton(b, text=txt, command=cmd, fg_color=fg, hover_color=hg, font=ctk.CTkFont(size=12, weight="bold"), width=130, height=34, corner_radius=6, border_width=1, border_color="#333333")
             return tk.Button(b, text=txt, command=cmd, bg=fg, fg="white", font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2", width=14)
 
-        mk("Выбрать все", self._sel_all, "#222222", "#444444").pack(side="left", padx=4, pady=6)
-        mk("Снять выбор", self._desel, "#222222", "#444444").pack(side="left", padx=4, pady=6)
+        mk("\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u0432\u0441\u0435", self._sel_all, "#222222", "#444444").pack(side="left", padx=4, pady=6)
+        mk("\u0421\u043d\u044f\u0442\u044c \u0432\u044b\u0431\u043e\u0440", self._desel, "#222222", "#444444").pack(side="left", padx=4, pady=6)
 
         self.sel_lbl = ctk.CTkLabel(b, text="", font=ctk.CTkFont(size=11), text_color="#666666") if self.u else tk.Label(b, text="", font=("Segoe UI", 10), bg=bg, fg="#666666")
         self.sel_lbl.pack(side="left", padx=12, pady=6)
@@ -395,10 +456,10 @@ class App:
         self.status_lbl = ctk.CTkLabel(b, text="", font=ctk.CTkFont(size=10), text_color="#555555") if self.u else tk.Label(b, text="", font=("Segoe UI", 9), bg=bg, fg="#555555")
         self.status_lbl.pack(side="left", padx=8, pady=6)
 
-        mk("Обновить", self._load, "#222222", "#444444").pack(side="right", padx=4, pady=6)
-        mk("Выход", self._quit, "#333333", "#555555").pack(side="right", padx=4, pady=6)
+        mk("\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c", self._load, "#222222", "#444444").pack(side="right", padx=4, pady=6)
+        mk("\u0412\u044b\u0445\u043e\u0434", self._quit, "#333333", "#555555").pack(side="right", padx=4, pady=6)
 
-        self.del_btn = ctk.CTkButton(b, text="Удалить выбранные", command=self._del, fg_color="#ffffff", hover_color="#cccccc", text_color="#000000", font=ctk.CTkFont(size=13, weight="bold"), width=180, height=38, corner_radius=6) if self.u else tk.Button(b, text="Удалить выбранные", command=self._del, bg="#ffffff", fg="#000000", font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2")
+        self.del_btn = ctk.CTkButton(b, text="\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435", command=self._del, fg_color="#ffffff", hover_color="#cccccc", text_color="#000000", font=ctk.CTkFont(size=13, weight="bold"), width=180, height=38, corner_radius=6) if self.u else tk.Button(b, text="\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435", command=self._del, bg="#ffffff", fg="#000000", font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2")
         self.del_btn.pack(side="right", padx=5, pady=6)
 
         self.spinner = Spinner(self.prog_lbl)
@@ -412,11 +473,15 @@ class App:
     def _fill(self):
         self.lb.delete(0, tk.END)
         for p in self.filt:
-            self.lb.insert(tk.END, p["name"])
+            sz = format_size(p["size"])
+            if sz:
+                display = f"{p['name']}  \u2014  {sz}"
+            else:
+                display = p["name"]
+            self.lb.insert(tk.END, display)
 
     def _on_type(self, e=None):
-        if self.search_id:
-            self.r.after_cancel(self.search_id)
+        if self.search_id: self.r.after_cancel(self.search_id)
         self.search_id = self.r.after(120, self._do_search)
 
     def _do_search(self):
@@ -429,7 +494,8 @@ class App:
         try: sc = len(self.lb.curselection())
         except: sc = 0
         self.cnt_lbl.configure(text=f"{len(self.filt)} / {len(self.all)}")
-        self.sel_lbl.configure(text=f"Выбрано: {sc}")
+        self.sel_lbl.configure(text=f"\u0412\u044b\u0431\u0440\u0430\u043d\u043e: {sc}")
+        if self._sb_canvas: self.r.after(10, self._sb_update)
 
     def _sel_all(self):
         self.lb.select_set(0, tk.END)
@@ -446,28 +512,25 @@ class App:
         for i in sorted(idx):
             n = self.lb.get(i)
             for p in self.filt:
-                if p["name"] == n:
+                if p["name"] in n:
                     res.append(p)
                     break
         return res
 
     def _del(self):
         if self.busy:
-            custom_msg(self.r, "Подождите", "Удаление уже в процессе...\nПодождите завершения текущей операции.")
+            self._show_toast("\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435 \u0443\u0436\u0435 \u0432 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0435...")
             return
         sel = self._sel()
         if not sel:
-            custom_msg(self.r, "Ничего не выбрано", "Вы не выбрали ни одной программы.\n\nВыберите нужные программы\n(Ctrl + клик для нескольких)")
+            self._show_toast("\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043f\u0440\u043e\u0433\u0440\u0430\u043c\u043c\u044b")
             return
-        names = "\n".join(f"  {p['name']}" for p in sel[:15])
-        if len(sel) > 15: names += f"\n  ... и ещё {len(sel)-15}"
-        if not custom_confirm(self.r, "Подтверждение удаления", f"Будет удалено: {len(sel)} программ\n\n{names}"):
+        if not custom_confirm(self.r, "\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435", f"\u0423\u0434\u0430\u043b\u0438\u0442\u044c {len(sel)} \u043f\u0440\u043e\u0433\u0440\u0430\u043c\u043c?"):
             return
         self.busy = True
         try: self.del_btn.configure(state="disabled")
         except: pass
-        self.status_lbl.configure(text=f"Подготовка к удалению...")
-        self.spinner.start(f"Удаление {len(sel)} программ")
+        self.spinner.start(f"\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435 {len(sel)} \u043f\u0440\u043e\u0433\u0440\u0430\u043c\u043c")
         self.r.update_idletasks()
         threading.Thread(target=self._worker, args=(sel,), daemon=True).start()
 
@@ -477,8 +540,7 @@ class App:
         n = len(sel)
         for i, p in enumerate(sel):
             self.r.after(0, lambda ii=i, pp=p: self.status_lbl.configure(text=f"[{ii+1}/{n}] {pp['name'][:40]}..."))
-            r = [False]
-            ev = threading.Event()
+            r = [False]; ev = threading.Event()
             def cb(v, r=r, e=ev): r[0] = v; e.set()
             threading.Thread(target=bg_uninstall, args=(p["cmd"], p["name"], cb), daemon=True).start()
             ev.wait(320)
@@ -492,136 +554,65 @@ class App:
         except: pass
         self.spinner.stop()
         self._load()
-
-        if self.u:
-            d = ctk.CTkToplevel(self.r)
-            d.title("")
-            d.geometry("460x340")
-            d.configure(fg_color="#0a0a0a")
-            d.resizable(False, False)
-            d.grab_set()
-            top = ctk.CTkFrame(d, fg_color="#111111", corner_radius=0, height=55)
-            top.pack(fill="x")
-            top.pack_propagate(False)
-            if fail == 0:
-                ctk.CTkLabel(top, text="Готово", font=ctk.CTkFont(size=17, weight="bold"), text_color="#27ae60").pack(side="left", padx=18, pady=14)
-                ctk.CTkLabel(d, text=f"Все {ok} программ\nуспешно удалены", font=ctk.CTkFont(size=14), text_color="#cccccc", justify="center").pack(expand=True, pady=20)
-                self.status_lbl.configure(text=f"Удалено: {ok}")
-            else:
-                ctk.CTkLabel(top, text="Результат", font=ctk.CTkFont(size=17, weight="bold"), text_color="#e67e22").pack(side="left", padx=18, pady=14)
-                msg = f"Удалено: {ok}  |  Ошибки: {fail}"
-                if fails:
-                    msg += "\n\nНе удалось:\n" + "\n".join(f"  {n}" for n in fails[:8])
-                ctk.CTkLabel(d, text=msg, font=ctk.CTkFont(size=12), text_color="#cccccc", justify="left", wraplength=420).pack(padx=20, pady=15, anchor="w")
-                self.status_lbl.configure(text=f"Ок: {ok} | Ошибки: {fail}")
-            ctk.CTkButton(d, text="OK", command=d.destroy, fg_color="#ffffff", text_color="#000000", hover_color="#cccccc", width=90, height=32, corner_radius=6).pack(pady=10)
+        if fail == 0:
+            self._show_toast(f"\u0423\u0434\u0430\u043b\u0435\u043d\u043e: {ok}")
         else:
-            t = "OK" if fail == 0 else "Errors"
-            messagebox.showinfo(t, f"OK: {ok}, Errors: {fail}")
+            msg = f"\u0423\u0434\u0430\u043b\u0435\u043d\u043e: {ok} | \u041e\u0448\u0438\u0431\u043a\u0438: {fail}"
+            if fails: msg += "\n" + ", ".join(fails[:5])
+            self._show_toast(msg)
 
-    def _auto_check_update(self):
+    def _show_toast(self, text, duration=4000):
+        if self.u:
+            t = ctk.CTkToplevel(self.r)
+            t.title(""); t.overrideredirect(True); t.configure(fg_color="#1a1a1a")
+            t.attributes("-topmost", True)
+            t.geometry(f"+{self.r.winfo_x()+200}+{self.r.winfo_y()+self.r.winfo_height()-80}")
+            ctk.CTkLabel(t, text=text, font=ctk.CTkFont(size=12), text_color="#cccccc", wraplength=500).pack(padx=16, pady=10)
+            t.after(duration, t.destroy)
+        else:
+            self.status_lbl.configure(text=text)
+            self.r.after(duration, lambda: self.status_lbl.configure(text=""))
+
+    def _auto_check(self):
         threading.Thread(target=self._bg_check, args=(False,), daemon=True).start()
-
-    def _check_update_ui(self):
-        if self.busy:
-            custom_msg(self.r, "Подождите", "Подождите завершения текущей операции.")
-            return
-        self.spinner.start("Проверка обновлений")
-        self.status_lbl.configure(text="Проверка обновлений...")
-        threading.Thread(target=self._bg_check, args=(True,), daemon=True).start()
 
     def _bg_check(self, show_always):
         result = check_update()
         self.r.after(0, lambda: self._on_check_done(result, show_always))
 
     def _on_check_done(self, result, show_always):
-        self.spinner.stop()
         if result is None:
-            if show_always:
-                self.status_lbl.configure(text="Обновлений нет")
-                custom_msg(self.r, "Обновлений нет", f"У вас последняя версия.\n\nТекущая версия: v{VERSION}")
-            else:
-                self.status_lbl.configure(text="")
+            if show_always: self._show_toast("\u0423 \u0432\u0430\u0441 \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u044f\u044f \u0432\u0435\u0440\u0441\u0438\u044f")
             return
         self.update_info = result
-        self.status_lbl.configure(text=f"Доступно: {result['version']}")
-        self._show_update_dialog(result)
-
-    def _show_update_dialog(self, info):
-        ver = info["version"]
-        changelog = info.get("changelog", "").strip()
-        if not changelog: changelog = "Описание отсутствует."
-
-        d = ctk.CTkToplevel(self.r) if self.u else tk.Toplevel(self.r)
-        d.title("")
-        d.configure(bg="#0a0a0a")
-        d.resizable(False, False)
-        d.grab_set()
-
-        if self.u:
-            d.geometry("500x420")
-            top = ctk.CTkFrame(d, fg_color="#111111", corner_radius=0, height=55)
-            top.pack(fill="x")
-            top.pack_propagate(False)
-            ctk.CTkLabel(top, text="Доступно обновление", font=ctk.CTkFont(size=17, weight="bold"), text_color="#27ae60").pack(side="left", padx=18, pady=14)
-            ctk.CTkLabel(d, text=f"Текущая версия: v{VERSION}\nНовая версия: {ver}", font=ctk.CTkFont(size=12), text_color="#aaaaaa").pack(padx=22, pady=(15, 5), anchor="w")
-
-            cl_label = ctk.CTkLabel(d, text="Что нового:", font=ctk.CTkFont(size=12, weight="bold"), text_color="#ffffff")
-            cl_label.pack(padx=22, pady=(5, 2), anchor="w")
-
-            cl_box = ctk.CTkTextbox(d, font=ctk.CTkFont(size=11), fg_color="#111111", text_color="#cccccc", wrap="word", height=150, border_width=1, border_color="#333333")
-            cl_box.pack(padx=22, pady=(0, 10), fill="both")
-            cl_box.insert("1.0", changelog)
-            cl_box.configure(state="disabled")
-
-            bf = ctk.CTkFrame(d, fg_color="transparent")
-            bf.pack(pady=(5, 12))
-            ctk.CTkButton(bf, text="Обновить", command=lambda: (d.destroy(), self._start_download(info)), fg_color="#ffffff", text_color="#000000", hover_color="#cccccc", width=150, height=38, corner_radius=6, font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=10)
-            ctk.CTkButton(bf, text="Позже", command=d.destroy, fg_color="#333333", hover_color="#555555", width=120, height=38, corner_radius=6, font=ctk.CTkFont(size=13)).pack(side="left", padx=10)
-        else:
-            d.geometry("460x400")
-            tk.Label(d, text="Доступно обновление", font=("Segoe UI", 14, "bold"), bg="#0a0a0a", fg="#27ae60").pack(padx=18, pady=12, anchor="w")
-            tk.Label(d, text=f"Текущая: v{VERSION}  |  Новая: {ver}", font=("Segoe UI", 11), bg="#0a0a0a", fg="#aaaaaa").pack(padx=18, pady=5, anchor="w")
-            tk.Label(d, text="Что нового:", font=("Segoe UI", 11, "bold"), bg="#0a0a0a", fg="#ffffff").pack(padx=18, pady=(8, 2), anchor="w")
-            cl_box = tk.Text(d, font=("Segoe UI", 10), bg="#111111", fg="#cccccc", wrap="word", height=8, relief="flat", highlightthickness=1, highlightbackground="#333333")
-            cl_box.pack(padx=18, pady=(0, 8), fill="both")
-            cl_box.insert("1.0", changelog)
-            cl_box.configure(state="disabled")
-            bf = tk.Frame(d, bg="#0a0a0a")
-            bf.pack(pady=10)
-            tk.Button(bf, text="Обновить", command=lambda: (d.destroy(), self._start_download(info)), bg="#ffffff", fg="#000000", font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2", width=16).pack(side="left", padx=8)
-            tk.Button(bf, text="Позже", command=d.destroy, bg="#333333", fg="white", font=("Segoe UI", 11), relief="flat", cursor="hand2", width=12).pack(side="left", padx=8)
+        self._show_update_banner(result)
 
     def _start_download(self, info):
         url = info.get("url")
         if not url:
-            custom_msg(self.r, "Ошибка", "Ссылка на загрузку не найдена.\n\nСкачайте вручную с GitHub.")
+            self._show_toast("\u0421\u0441\u044b\u043b\u043a\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430")
             return
-        self.spinner.start(f"Загрузка {info['version']}")
-        self.status_lbl.configure(text=f"Загрузка {info['version']}...")
+        self._show_download_progress(info)
         threading.Thread(target=self._bg_download, args=(url, info), daemon=True).start()
 
     def _bg_download(self, url, info):
-        def progress(pct, downloaded, total):
-            self.r.after(0, lambda p=pct: self.spinner.start(f"Загрузка {p}%"))
-        path = do_download(url, progress)
-        self.r.after(0, lambda: self._on_download_done(path, info))
+        path = do_download(url, lambda p: self.r.after(0, lambda pp=p: self._update_progress(pp)))
+        self.r.after(0, lambda: self._on_dl_done(path, info))
 
-    def _on_download_done(self, path, info):
-        self.spinner.stop()
+    def _on_dl_done(self, path, info):
         if not path:
-            self.status_lbl.configure(text="Ошибка загрузки")
-            custom_msg(self.r, "Ошибка", "Не удалось скачать обновление.\n\nПроверьте соединение с интернетом.")
+            self._hide_update_banner()
+            self._show_toast("\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438")
             return
-        ok = custom_confirm(self.r, "Обновление готово", f"Файл {info['version']} скачан.\n\nПрограмма будет закрыта и заменена.\nПродолжить?")
+        ok = custom_confirm(self.r, "\u0413\u043e\u0442\u043e\u0432\u043e", f"\u0424\u0430\u0439\u043b {info['version']} \u0441\u043a\u0430\u0447\u0430\u043d.\n\u041f\u0440\u043e\u0433\u0440\u0430\u043c\u043c\u0430 \u0431\u0443\u0434\u0435\u0442 \u0437\u0430\u043c\u0435\u043d\u0435\u043d\u043e.\n\u041f\u0440\u043e\u0434\u043e\u043b\u043b\u0436\u0438\u0442\u044c?")
         if ok:
-            self.spinner.start("Обновление...")
+            self._show_toast("\u0417\u0430\u043c\u0435\u043d\u0430...")
             self.r.update_idletasks()
             bat = create_update_bat(path)
             subprocess.Popen(["cmd", "/c", bat], creationflags=subprocess.CREATE_NO_WINDOW)
             self.r.after(1000, lambda: os._exit(0))
         else:
-            self.status_lbl.configure(text="Обновление отменено")
+            self._hide_update_banner()
             try: os.remove(path)
             except: pass
 
