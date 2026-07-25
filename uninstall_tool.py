@@ -14,7 +14,7 @@ try:
 except ImportError:
     sys.exit(1)
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 GITHUB_REPO = "screzzessssdscc-blip/CheckProgram"
 
 
