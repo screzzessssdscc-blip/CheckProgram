@@ -14,7 +14,7 @@ try:
 except ImportError:
     sys.exit(1)
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 GITHUB_REPO = "screzzessssdscc-blip/CheckProgram"
 
 
@@ -76,19 +76,29 @@ def do_download(url, progress_fn=None):
 
 
 def create_update_bat(new_exe_path):
-    current_exe = sys.executable
+    current_exe = os.path.abspath(sys.executable)
+    exe_dir = os.path.dirname(current_exe)
+    exe_name = os.path.basename(current_exe)
+    old_name = exe_name.replace(".exe", "_old.exe")
+    old_path = os.path.join(exe_dir, old_name)
     bat_path = os.path.join(tempfile.gettempdir(), "uninstall_tool_update.bat")
     bat_content = f'''@echo off
-timeout /t 2 /nobreak >nul
-taskkill /F /IM "UninstallTool.exe" >nul 2>&1
-timeout /t 2 /nobreak >nul
+powershell -Command "Start-Sleep -Seconds 4"
+taskkill /F /IM "{exe_name}" >nul 2>&1
+powershell -Command "Start-Sleep -Seconds 3"
+taskkill /F /IM "{exe_name}" >nul 2>&1
+powershell -Command "Start-Sleep -Seconds 1"
+if exist "{old_path}" del /f /q "{old_path}" >nul 2>&1
+if exist "{current_exe}" ren "{current_exe}" "{old_name}" >nul 2>&1
+powershell -Command "Start-Sleep -Seconds 1"
 copy /Y "{new_exe_path}" "{current_exe}" >nul 2>&1
 if %errorlevel%==0 (
     start "" "{current_exe}"
 ) else (
-    copy /Y "{new_exe_path}" "{os.path.dirname(current_exe)}\\UninstallTool.exe" >nul 2>&1
-    start "" "{os.path.dirname(current_exe)}\\UninstallTool.exe"
+    if exist "{old_path}" ren "{old_path}" "{exe_name}" >nul 2>&1
+    start "" "{current_exe}"
 )
+if exist "{old_path}" del /f /q "{old_path}" >nul 2>&1
 del /f /q "{new_exe_path}" >nul 2>&1
 del /f /q "%~f0" >nul 2>&1
 '''
@@ -606,14 +616,13 @@ class App:
         ok = custom_confirm(self.r, "Обновление готово", f"Файл {info['version']} скачан.\n\nПрограмма будет закрыта и заменена.\nПродолжить?")
         if ok:
             self.spinner.start("Обновление...")
+            self.r.update_idletasks()
             bat = create_update_bat(path)
             subprocess.Popen(["cmd", "/c", bat], creationflags=subprocess.CREATE_NO_WINDOW)
-            self.spinner.stop()
-            sys.exit(0)
+            self.r.after(1000, lambda: os._exit(0))
         else:
             self.status_lbl.configure(text="Обновление отменено")
-            temp = os.path.join(tempfile.gettempdir(), "UninstallTool_new.exe")
-            try: os.remove(temp)
+            try: os.remove(path)
             except: pass
 
     def _quit(self):
