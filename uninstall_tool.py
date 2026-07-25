@@ -416,19 +416,20 @@ class App:
     def _sb_press(self, e):
         self._sb_dragging = True
         self._sb_last_y = e.y
+        try:
+            c_h = self._sb_canvas.winfo_height()
+            if c_h < 20: return
+            self.lb.yview_moveto(max(0, (e.y - 10) / c_h))
+            self._sb_update()
+        except: pass
 
     def _sb_drag(self, e):
         if not self._sb_dragging: return
-        c = self._sb_canvas
-        c_h = c.winfo_height()
-        dy = e.y - self._sb_last_y
-        self._sb_last_y = e.y
         try:
-            first, last = self.lb.yview()
-            visible = last - first
-            if visible >= 1.0: return
-            delta = (dy / c_h) * visible
-            self.lb.yview_moveto(max(0, min(1, first + delta)))
+            c_h = self._sb_canvas.winfo_height()
+            if c_h < 20: return
+            self.lb.yview_moveto(max(0, (e.y - 10) / c_h))
+            self._sb_update()
         except: pass
 
     def _sb_release(self, e):
@@ -475,7 +476,7 @@ class App:
         for p in self.filt:
             sz = format_size(p["size"])
             if sz:
-                display = f"{p['name']}  \u2014  {sz}"
+                display = f"{p['name']}  -  {sz}"
             else:
                 display = p["name"]
             self.lb.insert(tk.END, display)
